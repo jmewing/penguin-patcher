@@ -1,0 +1,17 @@
+{
+  "name": "fedora",
+  "label": "Fedora Asahi Remix",
+  "rootfs_type": "squashfs",
+  "package_manager": "dnf",
+  "base_url": "https://asahilinux-fedora-remix.b-cdn.net/os/linux-firmware-asahi-latest-40-1.iso",
+  "kernel_config": "kernel-builder/configs/fedora.config",
+  "packages": [
+    "kernel-asahi",
+    "mesa-asahi",
+    "linux-firmware-asahi",
+    " NetworkManager",
+    "firewalld"
+  ],
+  "services": ["NetworkManager"],
+  "default_user": "penguin"
+}

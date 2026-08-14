@@ -1,0 +1,17 @@
+{
+  "name": "ubuntu",
+  "label": "Ubuntu ARM64 (Asahi kernel)",
+  "rootfs_type": "squashfs",
+  "package_manager": "apt",
+  "base_url": "https://cdimage.ubuntu.com/ubuntu-server/daily-live/current/noble-live-server-arm64.iso",
+  "kernel_config": "kernel-builder/configs/ubuntu.config",
+  "packages": [
+    "linux-image-asahi",
+    "mesa-asahi",
+    "linux-firmware-asahi",
+    "network-manager",
+    "iptables-persistent"
+  ],
+  "services": ["NetworkManager"],
+  "default_user": "penguin"
+}

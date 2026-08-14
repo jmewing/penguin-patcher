@@ -1,0 +1,17 @@
+{
+  "name": "debian",
+  "label": "Debian ARM64 (Asahi kernel)",
+  "rootfs_type": "squashfs",
+  "package_manager": "apt",
+  "base_url": "https://cdimage.debian.org/debian/daily/arm64/iso-cd/debian-testing-arm64-netinst.iso",
+  "kernel_config": "kernel-builder/configs/debian.config",
+  "packages": [
+    "linux-image-asahi",
+    "mesa-asahi",
+    "firmware-linux-asahi",
+    "network-manager",
+    "netfilter-persistent"
+  ],
+  "services": ["NetworkManager"],
+  "default_user": "penguin"
+}
