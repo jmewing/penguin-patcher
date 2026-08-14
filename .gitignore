@@ -1,0 +1,28 @@
+# Build artifacts
+build/
+build-*/
+*.img
+*.iso
+*.dmg
+*.tar.gz
+*.zip
+
+# macOS
+.DS_Store
+*.app/Contents/_CodeSignature/
+*.app/Contents/MacOS/
+*.app/Contents/Frameworks/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Secrets / local config
+.env
+local.mk
+
+# Temp
+tmp/
+temp/
+*.log
