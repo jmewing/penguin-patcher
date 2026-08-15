@@ -3,6 +3,11 @@
 # Run this on an ARM64 host (Raspberry Pi or Apple Silicon Linux).
 set -euo pipefail
 
+if [ "$EUID" -ne 0 ]; then
+  echo "[make-rootfs] Re-running with sudo..."
+  exec sudo "$0" "$@"
+fi
+
 DISTRO="${1:-debian}"
 OUT="${2:-$(pwd)/../penguin-build/out/rootfs.squashfs}"
 MODULES_DIR="${3:-}"
@@ -16,11 +21,11 @@ echo "[make-rootfs] Creating $DISTRO rootfs at $WORK"
 
 # Bootstrap minimal Debian
 if command -v mmdebstrap > /dev/null 2>&1; then
-  sudo mmdebstrap --variant=minbase \
+  mmdebstrap --variant=minbase \
     --include=openssh-server,iproute2,iputils-ping,isc-dhcp-client,curl,wget,vim-tiny,less,kmod,udev,procps,netbase \
     "$SUITE" "$WORK" "$MIRROR"
 else
-  sudo debootstrap --variant=minbase \
+  debootstrap --variant=minbase \
     --include=openssh-server,iproute2,iputils-ping,isc-dhcp-client,curl,wget,vim-tiny,less,kmod,udev,procps,netbase \
     "$SUITE" "$WORK" "$MIRROR"
 fi
@@ -28,8 +33,8 @@ fi
 # Install Asahi kernel modules if provided
 if [ -n "$MODULES_DIR" ] && [ -d "$MODULES_DIR" ]; then
   echo "[make-rootfs] Copying kernel modules..."
-  sudo mkdir -p "$WORK/lib/modules"
-  sudo cp -a "$MODULES_DIR"/* "$WORK/lib/modules/" 2>/dev/null || true
+  mkdir -p "$WORK/lib/modules"
+  cp -a "$MODULES_DIR"/* "$WORK/lib/modules/" 2>/dev/null || true
 fi
 
 # Setup networking
@@ -80,7 +85,7 @@ EOF
 mkdir -p "$WORK/live"
 
 # Build squashfs
-sudo mksquashfs "$WORK" "$OUT" -noappend -quiet -e boot
-sudo rm -rf "$WORK"
+mksquashfs "$WORK" "$OUT" -noappend -quiet -e boot
+rm -rf "$WORK"
 
 echo "Rootfs written to $OUT"
