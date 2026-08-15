@@ -28,8 +28,8 @@ fi
 # Install Asahi kernel modules if provided
 if [ -n "$MODULES_DIR" ] && [ -d "$MODULES_DIR" ]; then
   echo "[make-rootfs] Copying kernel modules..."
-  mkdir -p "$WORK/lib/modules"
-  cp -a "$MODULES_DIR"/* "$WORK/lib/modules/" 2>/dev/null || true
+  sudo mkdir -p "$WORK/lib/modules"
+  sudo cp -a "$MODULES_DIR"/* "$WORK/lib/modules/" 2>/dev/null || true
 fi
 
 # Setup networking
@@ -81,6 +81,6 @@ mkdir -p "$WORK/live"
 
 # Build squashfs
 sudo mksquashfs "$WORK" "$OUT" -noappend -quiet -e boot
-rm -rf "$WORK"
+sudo rm -rf "$WORK"
 
 echo "Rootfs written to $OUT"
