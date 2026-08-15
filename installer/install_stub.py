@@ -78,49 +78,97 @@ class DiskUtil:
 
     def find_system_disk(self):
         """Return the internal whole-disk identifier (e.g. disk0)."""
+        # Prefer a whole disk whose first partition is Apple_APFS_ISC and is
+        # confirmed internal via diskutil info. macOS 24.x no longer reliably
+        # includes Internal/Virtual in diskutil list -plist.
         for dsk in self.disk_list["AllDisksAndPartitions"]:
             name = dsk["DeviceIdentifier"]
-            if dsk.get("VirtualOrPhysical") == "Virtual":
+            if dsk.get("Content") == "Apple_APFS_Container":
                 continue
-            if not dsk.get("Internal"):
+            parts = dsk.get("Partitions", [])
+            if not (parts and parts[0].get("Content") == "Apple_APFS_ISC"):
+                continue
+            try:
+                info = self.get("info", "-plist", name)
+                if info.get("Internal"):
+                    logging.info(f"Found system disk: {name}")
+                    return name
+            except Exception:
+                continue
+        # Fallback: assume the first matching GUID disk is the internal one.
+        for dsk in self.disk_list["AllDisksAndPartitions"]:
+            name = dsk["DeviceIdentifier"]
+            if dsk.get("Content") == "Apple_APFS_Container":
                 continue
             parts = dsk.get("Partitions", [])
             if parts and parts[0].get("Content") == "Apple_APFS_ISC":
-                logging.info(f"Found system disk: {name}")
+                logging.info(f"Found system disk (fallback): {name}")
                 return name
         raise RuntimeError("Could not find internal system disk (Apple_APFS_ISC)")
 
+    def _find_store_partition(self, sys_disk, store_id):
+        """Locate a partition dict by its device identifier within sys_disk."""
+        dsk = self.disk_parts.get(sys_disk, {})
+        for part in dsk.get("Partitions", []):
+            if part.get("DeviceIdentifier") == store_id:
+                return part
+        return {}
+
     def find_system_container(self, sys_disk):
-        """Return the APFS container reference on the system disk."""
-        # The system disk usually has a container store like disk0s2 or disk0s1
+        """Return the main macOS APFS container reference on the system disk."""
+        # The system disk has multiple APFS containers (iSC/Preboot, main data,
+        # Recovery). We want the one backed by the main Apple_APFS physical store.
         for dev_id, ctnr in self.ctnr_by_store.items():
-            if dev_id.startswith(sys_disk):
+            if not dev_id.startswith(sys_disk):
+                continue
+            part = self._find_store_partition(sys_disk, dev_id)
+            if part.get("Content") == "Apple_APFS":
                 return ctnr["ContainerReference"]
-        # Fallback: look for any container whose physical store starts with sys_disk
+        # Fallback: scan all containers.
         apfs = self.get("apfs", "list", "-plist")
         for ctnr in apfs.get("Containers", []):
             store = ctnr.get("DesignatedPhysicalStore", "")
-            if store.startswith(sys_disk):
+            if not store.startswith(sys_disk):
+                continue
+            part = self._find_store_partition(sys_disk, store)
+            if part.get("Content") == "Apple_APFS":
                 return ctnr["ContainerReference"]
-        raise RuntimeError(f"Could not find APFS container on {sys_disk}")
+        raise RuntimeError(f"Could not find main APFS container on {sys_disk}")
 
     def resize_container(self, container_id, free_gb):
         """Shrink the container by free_gb, leaving that space unallocated."""
         ctnr = self.get("apfs", "list", container_id, "-plist")["Containers"][0]
-        current_size = ctnr["Size"]
-        used_bytes = ctnr.get("CapacityUsed", current_size)
-        # Leave a small safety margin
-        max_shrink = current_size - used_bytes - FREE_THRESHOLD
+        store = ctnr.get("DesignatedPhysicalStore")
+        if not store:
+            raise RuntimeError(f"No physical store for container {container_id}")
+        store_info = self.get("info", "-plist", store)
+        current_size = store_info["TotalSize"]
         want_free = free_gb * GIB
-        if want_free > max_shrink:
-            avail_gib = max_shrink / GIB
-            raise RuntimeError(
-                f"Cannot free {free_gb} GB; only ~{avail_gib:.1f} GB available"
-            )
+
+        # Use diskutil resize limits to avoid over-shrinking
+        limits = self.action("apfs", "resizeContainer", container_id, "limits").stdout.decode()
+        min_size = None
+        for line in limits.splitlines():
+            if "Minimum (constrained by file/snapshot usage):" in line:
+                try:
+                    min_size = int(line.split("(")[-1].split(" Bytes")[0].replace(",", ""))
+                except Exception:
+                    pass
+        if min_size is None:
+            min_size = current_size - want_free * 2  # rough fallback
+
+        safe_min = min_size + FREE_THRESHOLD
         new_size = current_size - want_free
-        new_size -= new_size % (4 * 1024 * 1024)  # align to 4 MiB
+        if new_size <= 0:
+            raise RuntimeError(f"Computed new container size is invalid ({new_size} bytes)")
+        if new_size < safe_min:
+            avail = current_size - safe_min
+            raise RuntimeError(
+                f"Cannot free {free_gb} GB; only ~{avail / GIB:.1f} GB can be safely reclaimed"
+            )
+        new_size -= new_size % (4 * 1024 * 1024)
         logging.info(
-            f"Resizing container {container_id} from {current_size} to {new_size} bytes"
+            f"Resizing container {container_id} (store {store}) from {current_size} to {new_size} bytes"
         )
         self.action("apfs", "resizeContainer", container_id, str(new_size))
         return new_size
@@ -129,6 +177,9 @@ class DiskUtil:
         """Create a new APFS volume inside the container."""
         logging.info(f"Creating APFS volume '{label}' in {container_id}")
         self.action("apfs", "addVolume", container_id, "APFS", label)
+        if self.dry_run:
+            # In dry-run the volume does not exist; return a placeholder.
+            return f"{container_id}sDRYRUN"
         apfs = self.get("apfs", "list", container_id, "-plist")
         for vol in apfs["Containers"][0]["Volumes"]:
             if vol["Name"] == label:
@@ -162,11 +213,15 @@ def detect_hardware():
 
 def find_penguin_usb():
     """Find the mounted Penguin Patcher USB volume by label or boot.bin presence."""
-    # Try diskutil list first
     data = load_plist(["/usr/sbin/diskutil", "list", "-plist"])
+
+    # macOS may report VolumeName/MountPoint either on the partition itself
+    # or nested under a 'Volumes' array. Collect every candidate named PENGUIN.
     candidates = []
     for dsk in data["AllDisksAndPartitions"]:
         for part in dsk.get("Partitions", []):
+            if part.get("VolumeName") == "PENGUIN":
+                candidates.append(part["DeviceIdentifier"])
             vols = part.get("Volumes", [])
             if not isinstance(vols, list):
                 vols = [vols] if vols else []
@@ -174,7 +229,7 @@ def find_penguin_usb():
                 if vol.get("VolumeName") == "PENGUIN":
                     candidates.append(vol["DeviceIdentifier"])
 
-    # Confirm mount point via diskutil info
+    # Confirm mount point and m1n1 Stage 2 presence via diskutil info
     for dev in candidates:
         try:
             info = load_plist(["/usr/sbin/diskutil", "info", "-plist", dev])

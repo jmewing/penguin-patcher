@@ -56,7 +56,7 @@ menuentry \"Penguin Patcher Linux\" {
     print("[ok] ESP populated.")
 
 
-def populate_installer(installer_dir, repo_root):
+def populate_installer(installer_dir, repo_root, stage2_path=None):
     """Populate the macOS-readable installer volume directory."""
     repo_root = Path(repo_root)
     readme = installer_dir / 'README.txt'
@@ -100,6 +100,20 @@ To remove the stub, boot to macOS Recovery, open Disk Utility, and delete
         print(f"[ok] Copied {script_src.name}")
     else:
         print(f"[warn] Installer script not found at {script_src}")
+
+    # Also place the m1n1 Stage 2 chainloader on the macOS-readable volume so
+    # the installer can copy it into the penguin-stub APFS volume.
+    stage2_src = Path(stage2_path) if stage2_path else None
+    if not stage2_src or not stage2_src.exists():
+        stage2_src = repo_root / "build" / "j274" / "m1n1" / "boot.bin"
+    if stage2_src.exists():
+        m1n1_dir = installer_dir / "m1n1"
+        m1n1_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(stage2_src, m1n1_dir / "boot.bin")
+        print(f"[ok] Copied m1n1/boot.bin ({stage2_src.stat().st_size} bytes)")
+    else:
+        print(f"[warn] m1n1/boot.bin not found; installer will fail on macOS")
+
     print("[ok] Installer volume populated.")
 
 
@@ -215,7 +229,7 @@ def main():
 
         stage2 = build_m1n1_stage2(work, args.dtb, args.uboot, args.m1n1)
         populate_esp(esp_dir, stage2, args.kernel, args.initrd, args.grub)
-        populate_installer(installer_dir, args.repo_root)
+        populate_installer(installer_dir, args.repo_root, stage2)
 
         if args.device_node:
             write_device(args.device_node, esp_dir, installer_dir, args.size)
