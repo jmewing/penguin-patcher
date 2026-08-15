@@ -73,13 +73,17 @@ Working prototype for Mac mini M1 (`j274`).
 - ✅ GRUB ARM64 EFI binary built
 - ✅ SSH-first Debian rootfs with kernel modules
 - ✅ Real initrd with squashfs/overlay root switch
-- ✅ USB image builder creates bootable GPT image
-- ✅ First bootable USB flashed to external drive
-- ❌ macOS m1n1 Stage 1 installer app not yet implemented
+- ✅ USB image builder creates bootable GPT image (raw file or direct `--device-node`)
+- ✅ 32 GB Penguin Patcher USB built with ESP + `PENGUIN` installer partition
+- ✅ Minimal macOS m1n1 Stage 1 installer (`installer/install_stub.py`) implemented
+- ✅ macOS app bundle `Penguin Patcher.app` with Terminal launcher
+- ✅ Verified `install_stub.py --dry-run` on a real Mac mini M1
+- ✅ IPSW cache helper script (`~/cache-apple-ipsws.sh`) downloads all signed Mac IPSWs and hard-links duplicates
+- ❌ Installer not yet tested with a real install + reboot on the Mac mini M1
 - ❌ Apple proprietary firmware (WiFi/BT/GPU) not yet bundled
 
 The USB boots Linux **after** the m1n1 Stage 1 stub is installed on the Mac.
-The installer is the next milestone.
+The next milestone is a real install + reboot test on the Mac mini M1.
 
 ## Quick Build (ARM64 host)
 
