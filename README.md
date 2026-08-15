@@ -66,7 +66,53 @@ stub then chainloads Linux from the USB drive.
 
 ## Status
 
-Early scaffolding. Not yet functional. See `docs/` for research and roadmap.
+Working prototype for Mac mini M1 (`j274`).
+
+- ✅ ARM64 build host setup (Raspberry Pi)
+- ✅ Asahi kernel, m1n1 Stage 2, U-Boot built for `j274`
+- ✅ GRUB ARM64 EFI binary built
+- ✅ SSH-first Debian rootfs with kernel modules
+- ✅ Real initrd with squashfs/overlay root switch
+- ✅ USB image builder creates bootable GPT image
+- ✅ First bootable USB flashed to external drive
+- ❌ macOS m1n1 Stage 1 installer app not yet implemented
+- ❌ Apple proprietary firmware (WiFi/BT/GPU) not yet bundled
+
+The USB boots Linux **after** the m1n1 Stage 1 stub is installed on the Mac.
+The installer is the next milestone.
+
+## Quick Build (ARM64 host)
+
+```bash
+# 1. Prepare an ARM64 Debian/Ubuntu build host
+./scripts/setup-build-host.sh
+
+# 2. Fetch sources
+./scripts/fetch-sources.sh
+
+# 3. Build firmware + kernel for Mac mini M1
+./scripts/build-firmware.sh j274
+
+# 4. Build live rootfs + initrd
+./scripts/distro/make-initrd.sh debian ../penguin-build/out/j274/initrd.img
+./scripts/distro/make-rootfs.sh debian ../penguin-build/out/j274/rootfs.squashfs \
+  ../penguin-build/out/j274/modules/lib/modules
+
+# 5. Build USB image
+python3 usb-maker/build_usb.py \
+  --distro debian --device j274 \
+  --kernel ../penguin-build/out/j274/Image \
+  --initrd ../penguin-build/out/j274/initrd.img \
+  --dtb ../penguin-build/out/j274/t8103-j274.dtb \
+  --uboot ../penguin-build/out/j274/u-boot-nodtb.bin.gz \
+  --m1n1 ../penguin-build/out/j274/m1n1.bin \
+  --grub ../penguin-build/out/j274/BOOTAA64.EFI \
+  --out ../penguin-build/out/j274/penguin-patcher-debian-j274-ssh.img \
+  --size 4096
+
+# 6. Flash to USB
+sudo dd if=../penguin-build/out/j274/penguin-patcher-debian-j274-ssh.img of=/dev/sdX bs=4M status=progress conv=fsync
+```
 
 ## License
 
