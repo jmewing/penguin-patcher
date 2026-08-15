@@ -82,16 +82,15 @@ def create_image(out_file, esp_dir, installer_dir, size_mb=4096):
 
     size_bytes = size_mb * 1024 * 1024
     esp_size_mb = 512
-    installer_size_mb = size_mb - esp_size_mb - 2
 
     with tempfile.TemporaryDirectory(prefix="penguin-usb-") as tmp:
         img = Path(tmp) / "usb.img"
         run(["dd", "if=/dev/zero", f"of={img}", "bs=1M", f"count={size_mb}", "status=progress"])
 
-        # Partition: ESP at 1MiB offset, installer after
+        # Partition: ESP at 1MiB offset, installer fills the rest
         sfdisk_script = f"label: gpt\n"
         sfdisk_script += f"start=1MiB, size={esp_size_mb}MiB, type=uefi, name=EFI-ESP\n"
-        sfdisk_script += f"size={installer_size_mb}MiB, type=windows-basic-data, name=PENGUIN-INST\n"
+        sfdisk_script += f"type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, name=PENGUIN-INST\n"
         run(["sfdisk", str(img)], input=sfdisk_script.encode())
 
         # Attach loop device with partition scan
