@@ -2,13 +2,16 @@
 """
 Penguin Patcher USB image builder.
 
-Creates a dual-partition USB image:
-- macOS-readable APFS/HFS+ volume with the installer app
-- FAT32 ESP with m1n1, U-Boot, GRUB, kernel, initrd, and rootfs
+Creates a raw disk image with:
+- ESP (FAT32): m1n1 Stage 2, U-Boot, GRUB, kernel, initrd
+- Installer volume (FAT32/exFAT): macOS installer app and README
+
+Requires: sfdisk, mkfs.vfat, parted, mtools (optional), root or loop privileges.
 """
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,38 +24,31 @@ def run(cmd, **kwargs):
 
 
 def build_m1n1_stage2(out_dir, device_dtb, uboot, m1n1):
-    """Build m1n1 Stage 2 binary: m1n1 + dtb + compressed u-boot."""
+    """Assemble m1n1 Stage 2: m1n1 + device dtb + compressed u-boot."""
     stage2 = out_dir / "m1n1" / "boot.bin"
     stage2.parent.mkdir(parents=True, exist_ok=True)
-    with open(m1n1, "rb") as f:
-        data = f.read()
-    with open(device_dtb, "rb") as f:
-        data += f.read()
-    with open(uboot, "rb") as f:
-        data += f.read()
+    data = Path(m1n1).read_bytes() + Path(device_dtb).read_bytes() + Path(uboot).read_bytes()
     stage2.write_bytes(data)
     print(f"[ok] m1n1 Stage 2: {stage2} ({len(data)} bytes)")
     return stage2
 
 
-def create_esp(esp_dir, stage2, kernel, initrd, grub_efi):
-    """Populate the ESP directory."""
+def populate_esp(esp_dir, stage2, kernel, initrd, grub_efi):
+    """Populate the FAT32 ESP directory."""
     (esp_dir / "m1n1").mkdir(parents=True, exist_ok=True)
     (esp_dir / "EFI" / "BOOT").mkdir(parents=True, exist_ok=True)
 
-    shutil = __import__("shutil")
     shutil.copy(stage2, esp_dir / "m1n1" / "boot.bin")
     shutil.copy(kernel, esp_dir / "EFI" / "BOOT" / "Image")
     shutil.copy(initrd, esp_dir / "EFI" / "BOOT" / "initrd.img")
     shutil.copy(grub_efi, esp_dir / "EFI" / "BOOT" / "BOOTAA64.EFI")
 
-    # Minimal GRUB config
     grub_cfg = esp_dir / "EFI" / "BOOT" / "grub.cfg"
     grub_cfg.write_text("""
 set timeout=5
 set default=0
 menuentry \"Penguin Patcher Linux\" {
-    linux /EFI/BOOT/Image console=tty0
+    linux /EFI/BOOT/Image console=tty0 root=/dev/ram0
     initrd /EFI/BOOT/initrd.img
     boot
 }
@@ -60,19 +56,74 @@ menuentry \"Penguin Patcher Linux\" {
     print("[ok] ESP populated.")
 
 
-def create_image(out_file, esp_dir, installer_dir, size_mb=4096):
-    """Create a raw disk image with two partitions."""
-    print(f"Creating USB image ({size_mb} MB)...")
-    # Real implementation would use sfdisk + mkfs.vfat + mkfs.hfs/apfs
-    # For scaffolding, we just create a tarball of the contents.
-    temp = Path(tempfile.gettempdir()) / "penguin-patcher-image"
-    temp.mkdir(exist_ok=True)
+def populate_installer(installer_dir, installer_app=None):
+    """Populate the installer volume directory."""
+    readme = installer_dir / "README.txt"
+    readme.write_text("""
+Penguin Patcher USB
+===================
+1. Open the installer app on a Mac running macOS 12.1 or later.
+2. Follow prompts to install the reversible m1n1 stub.
+3. Reboot with this USB drive connected and hold the power button.
+4. Select \"EFI Boot\" to start Linux.
 
-    shutil = __import__("shutil")
-    shutil.make_archive(str(out_file.with_suffix("")), "gztar", root_dir=temp)
-    print(f"[warn] Raw disk image generation not yet implemented.")
-    print(f"[warn] Wrote placeholder tarball: {out_file}.tar.gz")
-    return out_file.with_suffix(".tar.gz")
+To remove the stub, boot to macOS Recovery, open Disk Utility, and delete
+\"penguin-stub\" from the internal SSD.
+""")
+    if installer_app and Path(installer_app).exists():
+        shutil.copytree(installer_app, installer_dir / Path(installer_app).name, dirs_exist_ok=True)
+    print("[ok] Installer volume populated.")
+
+
+def create_image(out_file, esp_dir, installer_dir, size_mb=4096):
+    """Create a raw disk image with two FAT32 partitions."""
+    out_file = Path(out_file)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+
+    size_bytes = size_mb * 1024 * 1024
+    esp_size_mb = 512
+    installer_size_mb = size_mb - esp_size_mb - 2
+
+    with tempfile.TemporaryDirectory(prefix="penguin-usb-") as tmp:
+        img = Path(tmp) / "usb.img"
+        run(["dd", "if=/dev/zero", f"of={img}", "bs=1M", f"count={size_mb}", "status=progress"])
+
+        # Partition: ESP at 1MiB offset, installer after
+        sfdisk_script = f"label: gpt\n"
+        sfdisk_script += f"start=1MiB, size={esp_size_mb}MiB, type=uefi, name=EFI-ESP\n"
+        sfdisk_script += f"size={installer_size_mb}MiB, type=windows-basic-data, name=PENGUIN-INST\n"
+        run(["sfdisk", str(img)], input=sfdisk_script.encode())
+
+        # Attach loop device with partition scan
+        result = run(["losetup", "--show", "-Pf", str(img)], capture_output=True, text=True)
+        loop = result.stdout.strip()
+        try:
+            # Give kernel a moment to create partition nodes
+            import time
+            time.sleep(1)
+            part1 = f"{loop}p1"
+            part2 = f"{loop}p2"
+
+            run(["mkfs.vfat", "-F32", "-n", "ESP", part1])
+            run(["mkfs.vfat", "-F32", "-n", "PENGUIN", part2])
+
+            with tempfile.TemporaryDirectory(prefix="penguin-esp-") as esp_mnt, \
+                 tempfile.TemporaryDirectory(prefix="penguin-inst-") as inst_mnt:
+                run(["mount", part1, esp_mnt])
+                run(["mount", part2, inst_mnt])
+                try:
+                    shutil.copytree(esp_dir, esp_mnt, dirs_exist_ok=True)
+                    shutil.copytree(installer_dir, inst_mnt, dirs_exist_ok=True)
+                finally:
+                    run(["umount", esp_mnt])
+                    run(["umount", inst_mnt])
+        finally:
+            run(["losetup", "-d", loop])
+
+        shutil.copy(img, out_file)
+
+    print(f"[ok] USB image: {out_file}")
+    return out_file
 
 
 def main():
@@ -85,24 +136,28 @@ def main():
     parser.add_argument("--uboot", required=True, help="Path to u-boot-nodtb.bin.gz")
     parser.add_argument("--m1n1", required=True, help="Path to m1n1.bin")
     parser.add_argument("--grub", required=True, help="Path to BOOTAA64.EFI")
-    parser.add_argument("--installer-app", required=True, help="Path to Penguin Patcher.app bundle")
+    parser.add_argument("--installer-app", help="Path to Penguin Patcher.app bundle (optional)")
     parser.add_argument("--out", default="penguin-patcher-usb.img", help="Output image path")
+    parser.add_argument("--size", type=int, default=4096, help="USB image size in MB")
     args = parser.parse_args()
+
+    if os.geteuid() != 0:
+        print("[warn] This script uses losetup and mount; run as root or with sudo.", file=sys.stderr)
 
     work = Path(tempfile.mkdtemp(prefix="penguin-usb-"))
     try:
         esp_dir = work / "esp"
         esp_dir.mkdir()
-        stage2 = build_m1n1_stage2(work, args.dtb, args.uboot, args.m1n1)
-        create_esp(esp_dir, stage2, args.kernel, args.initrd, args.grub)
-
         installer_dir = work / "installer"
         installer_dir.mkdir()
-        # TODO: copy app bundle contents into installer_dir
 
-        create_image(Path(args.out), esp_dir, installer_dir)
+        stage2 = build_m1n1_stage2(work, args.dtb, args.uboot, args.m1n1)
+        populate_esp(esp_dir, stage2, args.kernel, args.initrd, args.grub)
+        populate_installer(installer_dir, args.installer_app)
+
+        create_image(Path(args.out), esp_dir, installer_dir, args.size)
     finally:
-        pass  # Keep work dir for debugging, or clean up later
+        shutil.rmtree(work, ignore_errors=True)
 
     return 0
 
