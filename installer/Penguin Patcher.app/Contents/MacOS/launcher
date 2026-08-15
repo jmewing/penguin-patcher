@@ -1,0 +1,21 @@
+#!/bin/bash
+# Launcher for Penguin Patcher Installer.app
+# Double-clicking the app opens Terminal and runs the installer with sudo.
+
+BUNDLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+VOLUME_DIR="$(cd "$BUNDLE_DIR/../../.." && pwd)"
+
+# The installer script is expected next to the .app bundle on the USB volume.
+INSTALLER="$VOLUME_DIR/install_stub.py"
+
+if [[ ! -f "$INSTALLER" ]]; then
+    osascript -e 'display alert "Penguin Patcher" message "install_stub.py was not found next to Penguin Patcher.app on the USB drive."'
+    exit 1
+fi
+
+osascript <<EOF
+tell application "Terminal"
+    activate
+    do script "echo 'Penguin Patcher installer starting...'; sudo python3 '$INSTALLER'; echo ''; echo 'Press Enter to close...'; read"
+end tell
+EOF
