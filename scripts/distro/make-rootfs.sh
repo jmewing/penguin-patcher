@@ -16,11 +16,12 @@ echo "[make-rootfs] Creating $DISTRO rootfs at $WORK"
 
 # Bootstrap minimal Debian
 if command -v mmdebstrap > /dev/null 2>&1; then
-  sudo mmdebstrap --variant=minbase "$SUITE" "$WORK" "$MIRROR" \
-    openssh-server iproute2 iputils-ping isc-dhcp-client curl wget \
-    vim-tiny less kmod udev procps netbase
+  sudo mmdebstrap --variant=minbase \
+    --include=openssh-server,iproute2,iputils-ping,isc-dhcp-client,curl,wget,vim-tiny,less,kmod,udev,procps,netbase \
+    "$SUITE" "$WORK" "$MIRROR"
 else
-  sudo debootstrap --variant=minbase --include=openssh-server,iproute2,iputils-ping,isc-dhcp-client,curl,wget,vim-tiny,less,kmod,udev,procps,netbase \
+  sudo debootstrap --variant=minbase \
+    --include=openssh-server,iproute2,iputils-ping,isc-dhcp-client,curl,wget,vim-tiny,less,kmod,udev,procps,netbase \
     "$SUITE" "$WORK" "$MIRROR"
 fi
 

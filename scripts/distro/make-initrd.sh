@@ -101,8 +101,10 @@ exec switch_root /run/newroot /sbin/init
 EOF
 chmod +x "$WORK/init"
 
+OUT_ABS="$(realpath -m "$OUT")"
+
 cd "$WORK"
-find . | cpio -o -H newc | gzip -9 > "$OUT"
+find . | cpio -o -H newc | gzip -9 > "$OUT_ABS"
 rm -rf "$WORK"
 
 echo "Initrd written to $OUT"
